@@ -53,7 +53,7 @@ jobs:
               --machine basicLinux32gb \
               --display-name "gg-tunnel-run" \
               --idle-timeout 30m \
-              --retention-period 1d)
+              --retention-period 24h)
             
             CS_NAME=$(echo "$RAW_OUTPUT" | grep -o '[a-zA-Z0-9-]\+-[a-zA-Z0-9]\+-[a-zA-Z0-9]\+-[a-zA-Z0-9]\+' | head -n 1)
             if [ -z "$CS_NAME" ]; then
