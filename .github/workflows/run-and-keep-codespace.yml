@@ -1,0 +1,117 @@
+name: Auto Run GG-Tunnel and Save Config
+
+on:
+  workflow_dispatch:
+
+jobs:
+  auto-run-codespace:
+    name: Auto Run GG-Tunnel in Codespace
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install GitHub CLI
+        run: |
+          type -p curl >/dev/null || (sudo apt update && sudo apt install curl -y)
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update
+          sudo apt install gh -y
+
+      - name: Auth with GitHub CLI
+        run: |
+          if [ -n "${{ secrets.PAT_TOKEN }}" ]; then
+            echo "${{ secrets.PAT_TOKEN }}" | gh auth login --with-token
+          else
+            echo "PAT_TOKEN is missing! Starting Device Login Flow..."
+            timeout 300 gh auth login --web --scopes "repo,codespace,workflow"
+          fi
+          gh auth status
+
+      - name: Create or Reuse Codespace
+        id: manage_cs
+        run: |
+          echo "Checking for existing codespaces for this repository..."
+          EXISTING_CS=$(gh codespace list --repo ${{ github.repository }} --json name --jq '.[0].name' 2>/dev/null || echo "")
+          
+          if [ -n "$EXISTING_CS" ]; then
+            echo "Found an active codespace: $EXISTING_CS. Reusing it..."
+            CS_NAME="$EXISTING_CS"
+          else
+            echo "No existing codespace found. Creating a new one..."
+            RAW_OUTPUT=$(gh codespace create \
+              --repo ${{ github.repository }} \
+              --branch main \
+              --machine basicLinux32gb \
+              --display-name "gg-tunnel-run" \
+              --idle-timeout 30m \
+              --retention-period 1d)
+            
+            CS_NAME=$(echo "$RAW_OUTPUT" | grep -o '[a-zA-Z0-9-]\+-[a-zA-Z0-9]\+-[a-zA-Z0-9]\+-[a-zA-Z0-9]\+' | head -n 1)
+            if [ -z "$CS_NAME" ]; then
+              CS_NAME=$(echo "$RAW_OUTPUT" | tail -n 1)
+            fi
+          fi
+          
+          echo "cs_name=$CS_NAME" >> $GITHUB_OUTPUT
+          echo "Target Codespace: $CS_NAME"
+
+      - name: Stream Live VS Code Container Logs
+        run: |
+          CS="${{ steps.manage_cs.outputs.cs_name }}"
+          echo "=========================================================="
+          echo "📺 STREAMING LIVE TERMINAL LOGS FROM VS CODE ENVIRONMENT"
+          echo "=========================================================="
+          
+          # This officially streams everything that happens inside the creation logs LIVE to the GitHub Action UI
+          gh codespace logs -c "$CS" -f > terminal_full_output.log &
+          LOGS_PID=$!
+          
+          # Let it stream live for 90 seconds while the devcontainer sets up and runs print-configs
+          sleep 90
+          
+          # Safely kill the streaming process so the action can proceed to extraction
+          kill $LOGS_PID || true
+          echo "=========================================================="
+          echo "✅ LIVE STREAM COMPLETED"
+          echo "=========================================================="
+
+      - name: Extract Config From Logs
+        run: |
+          if grep -q "G-Tunnel GAMING CONFIGS" terminal_full_output.log; then
+            echo "Target config found in live terminal stream! Extracting..."
+            sed -n '/G-Tunnel GAMING CONFIGS/,$p' terminal_full_output.log > Config.txt
+          else
+            echo "Pattern not found in streaming logs. Fetching a direct backup via safe execution..."
+            gh codespace ssh -c "${{ steps.manage_cs.outputs.cs_name }}" -- "/usr/local/bin/print-configs.sh" > Config.txt 2>/dev/null || true
+            
+            if ! grep -q "G-Tunnel GAMING CONFIGS" Config.txt; then
+               echo "Warning: Config marker still missing. Saving full streamed output for debug."
+               cat terminal_full_output.log > Config.txt
+            fi
+          fi
+
+      - name: Save Config.txt To Repository
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add Config.txt
+          git commit -m "Update Config.txt [skip ci]" || true
+          git push || true
+
+      - name: Cleanup / Stop Codespace
+        if: always()
+        run: |
+          CS="${{ steps.manage_cs.outputs.cs_name }}"
+          if [ -n "$CS" ]; then
+            echo "Stopping codespace execution..."
+            gh codespace stop -c "$CS" || true
+          fi
