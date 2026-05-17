@@ -58,20 +58,20 @@ jobs:
             CS_NAME=$(echo "$RAW_OUTPUT" | grep -o '[a-zA-Z0-9-]\+-[a-zA-Z0-9]\+-[a-zA-Z0-9]\+-[a-zA-Z0-9]\+' | head -n 1)
             if [ -z "$CS_NAME" ]; then
               CS_NAME=$(echo "$RAW_OUTPUT" | tail -n 1)
-            fi
+          fi
           fi
           
           echo "cs_name=$CS_NAME" >> $GITHUB_OUTPUT
           echo "Target Codespace: $CS_NAME"
 
-      - name: Stream Live VS Code Container Logs (No SSH)
+      - name: Stream Live VS Code Container Logs
         run: |
           CS="${{ steps.manage_cs.outputs.cs_name }}"
           echo "=========================================================="
-          echo "📺 STREAMING LIVE TERMINAL LOGS VIA OFFICIAL API"
+          echo "📺 STREAMING LIVE TERMINAL LOGS FROM VS CODE ENVIRONMENT"
           echo "=========================================================="
           
-          # Streams the creation and setup logs LIVE to the GitHub Action UI without SSH
+          # Streams the creation log live to the Action console using the now available SSH layers
           gh codespace logs -c "$CS" -f > terminal_full_output.log &
           LOGS_PID=$!
           
@@ -90,8 +90,13 @@ jobs:
             echo "Target config found in live terminal stream! Extracting..."
             sed -n '/G-Tunnel GAMING CONFIGS/,$p' terminal_full_output.log > Config.txt
           else
-            echo "Warning: Config marker missing in stream. Saving full logs for inspection."
-            cat terminal_full_output.log > Config.txt
+            echo "Pattern not found in streaming logs. Fetching directly via execution fallback..."
+            gh codespace ssh -c "${{ steps.manage_cs.outputs.cs_name }}" -- "/usr/local/bin/print-configs.sh" > Config.txt 2>/dev/null || true
+            
+            if ! grep -q "G-Tunnel GAMING CONFIGS" Config.txt; then
+               echo "Warning: Config marker missing. Saving full log for inspection."
+               cat terminal_full_output.log > Config.txt
+            fi
           fi
 
       - name: Save Config.txt To Repository
