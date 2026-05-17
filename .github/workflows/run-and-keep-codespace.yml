@@ -64,21 +64,21 @@ jobs:
           echo "cs_name=$CS_NAME" >> $GITHUB_OUTPUT
           echo "Target Codespace: $CS_NAME"
 
-      - name: Stream Live VS Code Container Logs
+      - name: Stream Live VS Code Container Logs (No SSH)
         run: |
           CS="${{ steps.manage_cs.outputs.cs_name }}"
           echo "=========================================================="
-          echo "📺 STREAMING LIVE TERMINAL LOGS FROM VS CODE ENVIRONMENT"
+          echo "📺 STREAMING LIVE TERMINAL LOGS VIA OFFICIAL API"
           echo "=========================================================="
           
-          # This officially streams everything that happens inside the creation logs LIVE to the GitHub Action UI
+          # Streams the creation and setup logs LIVE to the GitHub Action UI without SSH
           gh codespace logs -c "$CS" -f > terminal_full_output.log &
           LOGS_PID=$!
           
-          # Let it stream live for 90 seconds while the devcontainer sets up and runs print-configs
+          # Let it stream live for 90 seconds while the devcontainer runs print-configs
           sleep 90
           
-          # Safely kill the streaming process so the action can proceed to extraction
+          # Safely stop streaming
           kill $LOGS_PID || true
           echo "=========================================================="
           echo "✅ LIVE STREAM COMPLETED"
@@ -90,13 +90,8 @@ jobs:
             echo "Target config found in live terminal stream! Extracting..."
             sed -n '/G-Tunnel GAMING CONFIGS/,$p' terminal_full_output.log > Config.txt
           else
-            echo "Pattern not found in streaming logs. Fetching a direct backup via safe execution..."
-            gh codespace ssh -c "${{ steps.manage_cs.outputs.cs_name }}" -- "/usr/local/bin/print-configs.sh" > Config.txt 2>/dev/null || true
-            
-            if ! grep -q "G-Tunnel GAMING CONFIGS" Config.txt; then
-               echo "Warning: Config marker still missing. Saving full streamed output for debug."
-               cat terminal_full_output.log > Config.txt
-            fi
+            echo "Warning: Config marker missing in stream. Saving full logs for inspection."
+            cat terminal_full_output.log > Config.txt
           fi
 
       - name: Save Config.txt To Repository
